@@ -75,12 +75,15 @@ class Store:
         if not self.pub["repo"]:
             return False
         committed = False
-        if self.changes:
-            self._git("add", "-A")
-            if self._git("diff", "--cached", "--quiet", check=False).returncode != 0:
-                subject = self.changes[0] if len(self.changes) == 1 else f"{len(self.changes)} firmware changes"
-                self._git("commit", "-q", "-m", subject + "\n\n" + "\n".join(self.changes))
-                committed = True
+        # also without firmware changes: index.json / README.md / catalog.json can
+        # change on their own (a new field, a channel taken out of the config)
+        self._git("add", "-A")
+        if self._git("diff", "--cached", "--quiet", check=False).returncode != 0:
+            subject = (self.changes[0] if len(self.changes) == 1
+                       else f"{len(self.changes)} firmware changes" if self.changes
+                       else "Update index.json, README.md and catalog")
+            self._git("commit", "-q", "-m", subject + "\n\n" + "\n".join(self.changes))
+            committed = True
         has_head = self._git("rev-parse", "-q", "--verify", "HEAD", check=False, capture=True).returncode == 0
         if push and has_head:
             if not os.environ.get("GITHUB_TOKEN"):

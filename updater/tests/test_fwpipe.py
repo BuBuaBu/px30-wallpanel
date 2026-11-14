@@ -500,6 +500,29 @@ class PipelineTest(unittest.TestCase):
         self.assertEqual(self.actions(p2)[("tubeszb-mgm210", "zigbee_ncp", "latest")], "published")
 
 
+class StoreCommitTest(unittest.TestCase):
+    @unittest.skipUnless(shutil.which("git"), "git not installed")
+    def test_index_only_change_is_committed(self):
+        from fwpipe.store import Store
+        with tempfile.TemporaryDirectory() as root:
+            g = ["git", "-C", root, "-c", "user.name=t", "-c", "user.email=t@t"]
+            subprocess.run(["git", "init", "-q", root], check=True)
+            with open(os.path.join(root, "index.json"), "w") as f:
+                f.write("{}")
+            subprocess.run(g + ["add", "-A"], check=True)
+            subprocess.run(g + ["commit", "-q", "-m", "first"], check=True)
+            subprocess.run(["git", "-C", root, "config", "user.name", "t"], check=True)
+            subprocess.run(["git", "-C", root, "config", "user.email", "t@t"], check=True)
+            st = Store(root, {"devices": {"d": {}}}, ["d"], {"repo": "o/r", "branch": "firmware"})
+            self.assertFalse(st.commit_push(push=False))          # nothing changed
+            with open(os.path.join(root, "index.json"), "w") as f:
+                f.write('{"channels": ["stable", "latest"]}')
+            self.assertTrue(st.commit_push(push=False))           # no firmware change, still committed
+            log = subprocess.run(["git", "-C", root, "log", "-1", "--format=%s"],
+                                 capture_output=True, text=True).stdout.strip()
+            self.assertEqual(log, "Update index.json, README.md and catalog")
+
+
 class BuildHelpersTest(unittest.TestCase):
     def test_zigbee_stack_version(self):
         with tempfile.TemporaryDirectory() as sdk:
