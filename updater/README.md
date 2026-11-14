@@ -39,8 +39,16 @@ About the router:
   derives a router from Nabu Casa's ZBT-2 router by stripping that board's LEDs,
   accelerometer and button, and drops the ZBT-2's boot-time join: the TubesZB's
   ESP32 starts network steering over the CLI (a "join" button on its web page).
-  Test-built on SDK 2026.6.1 (beta channel). The ESP32 can always put the radio
-  in its bootloader with a GPIO, so the way back is safe.
+  Test-built on SDK 2026.6.1. The ESP32 can always put the radio in its
+  bootloader with a GPIO, so the way back is safe. It stays `experimental`
+  until a build has joined a network on a real TubesZB; then pin `stable` to
+  that build.
+- **Router versions.** The router carries no version of its own (upstream's
+  builder writes none), so fwpipe publishes it under the EmberZNet version of
+  its SDK, read from the SDK's `config.h` the way the NCP's `ezsp_version` is
+  (9.1.1.1, not the SDK number 2026.6.1). A new router build on the same SDK
+  (the router sources in the builder, our overlay or the panel's router
+  recipe changed) becomes a revision: `9.1.1.1-r2`.
 - A router joins an existing Zigbee network as a repeater. The device stops
   being a coordinator; its own network is gone.
 
@@ -50,27 +58,39 @@ About the router:
 |---|---|---|
 | `stable` | newest full release of the builder: what Home Assistant ships for its own adapters | pinned in `config.yaml` (4.4.6, the build tested on the panel); promote by editing the pin |
 | `latest` | head of `main`, with the SDK its manifests name | highest Gecko SDK 4.x release |
-| `beta` | newest pre-release, only while it is newer than the release | a Gecko SDK pre-release, when one exists |
 
-As of 2026-11-12 that gives:
+There is no `beta` channel any more (the code still knows `source: prerelease`).
+A channel taken out of `config.yaml` is archived from the firmware branch on
+the next full pass, and drops out of `index.json` and the catalog.
 
-| | stable | beta | latest |
-|---|---|---|---|
-| TubesZB Zigbee | builder v2026.02.23, Gecko SDK 4.5.0 (EmberZNet 7.5.1.0) | v2026.09.17-beta2, Simplicity SDK 2026.6.1 (9.1.1.1) | main |
-| TubesZB Thread | v2026.02.23, Simplicity SDK 2025.6.2 (2.7.2.0) | as Zigbee | as Zigbee |
-| Panel | Gecko SDK 4.4.6 (EmberZNet 7.5.0.0) | none | Gecko SDK 4.5.1 (EmberZNet 7.5.2.0) |
+As of 2026-11-14 that gives:
 
-The TubesZB runs 9.1.1.1 and follows **`beta`** (the default of its channel
-select); `stable` would be a downgrade.
+| | stable | latest |
+|---|---|---|
+| TubesZB Zigbee | builder v2026.02.23, Gecko SDK 4.5.0 (EmberZNet 7.5.1.0) | main, Simplicity SDK 2026.6.1 (9.1.1.1) |
+| TubesZB Thread | v2026.02.23, Simplicity SDK 2025.6.2 (2.7.2.0) | main (3.1.1.0) |
+| Panel | Gecko SDK 4.4.6 (EmberZNet 7.5.0.0) | Gecko SDK 4.5.1 (EmberZNet 7.5.2.0) |
+
+The TubesZB runs 9.1.1.1 and follows **`latest`**; `stable` is older there,
+so switching to it would be a downgrade. Every published build carries a
+**`version_code`** (in `manifest.json`, `index.json`, `efr32_flasher.json` and
+the panel catalog): one integer, major·10⁹ + minor·10⁶ + patch·10³ + special,
+times 100, plus the revision (`fwpipe/util.py`, `version_code`). A client
+computes the same code for the version the radio reports (revision 1) and
+offers a build only when its code is higher. `index.json` also names the
+`newest` channel per firmware type.
 
 A channel only gets a new build when the **firmware version** changes (or when
 the overlay / recipe in this repo changes: the version then gets a `-r2`
 suffix). Upstream commits that do not change the version are built once, to
-find that out, and not published. A channel whose source disappears (a beta
-that became the release) is moved to the archive and removed.
+find that out, and not published. A channel whose source disappears (a
+pre-release that became the release) is moved to the archive and removed.
 
 A failed build leaves the channel as it was, is reported, and is retried after
-24 h, then 48 h, up to once a week.
+24 h, then 48 h, up to once a week; or on the next pass when fwpipe itself
+changed (its code, the tool wrappers, the panel recipe or the Dockerfile: a new
+image with a fix retries at once). `fwpipe retry [--device D] [--firmware F]
+[--channel C]` forgets failed builds by hand.
 
 ## What gets published
 
@@ -148,7 +168,7 @@ later passes only do something when upstream moved.
 4. Do one pass by hand and watch it (start small):
 
    ```bash
-   docker compose run --rm fwpipe run --device tubeszb-mgm210 --firmware zigbee_ncp --channel beta
+   docker compose run --rm fwpipe run --device tubeszb-mgm210 --firmware zigbee_ncp --channel latest
    ```
 5. Leave it running:
 
@@ -157,7 +177,22 @@ later passes only do something when upstream moved.
    ```
 
 Other commands: `fwpipe status`, `fwpipe run --force` (rebuild and republish),
-`fwpipe run --no-push` (commit in the volume, do not push).
+`fwpipe run --no-push` (commit in the volume, do not push), `fwpipe retry`
+(forget failed builds).
+
+**Which config applies.** The `config.yaml` in the repository (`main`) is the
+only source of truth. Build the image from `main` and do not mount a config of
+your own over `/app/updater/config.yaml`: a copy on the server drifts from the
+repository, and changes made in git then never arrive. Change the config with a
+commit, then rebuild the image. (`docker-compose.yml` here mounts the checkout's
+own `config.yaml`, which is the same file.) To build straight from GitHub
+without a checkout, use a git build context:
+
+```yaml
+    build:
+      context: https://github.com/Warre118/px30-wallpanel.git#main
+      dockerfile: updater/Dockerfile
+```
 `FWPIPE_LOCAL_ONLY=1` builds and writes everything under `/data/repos/local_<device>`
 without touching GitHub.
 
@@ -201,7 +236,7 @@ reverse proxy in front.
    lists into `/data/radio`, checking their sha256. Nothing is flashed.
 2. The update entity *Radio module firmware* then compares the version on the
    chip with the build of the selected channel (*Radio module channel*:
-   stable / latest / beta) for the stack on the chip, with the release summary
+   stable / latest) for the stack on the chip, with the release summary
    and a link to the release notes.
 3. *Install* runs `px30-radio switch <stack> <channel>`, behind the unlock
    switch. Flashing uses `universal-silabs-flasher` 1.3; it still has to be
@@ -212,7 +247,7 @@ reverse proxy in front.
 The `efr32_radio` update platform in the TubesZB repo
 (`esphome/components/efr32_radio`, documented in its `docs/radio-updates.md`)
 reads `<firmware>/<channel>/manifest.json` and its signature. On the device:
-a *Radio firmware channel* select (stable / latest / beta, default beta), a
+a *Radio firmware channel* select (stable / latest), a
 *Radio firmware type* select (Zigbee / Thread), and the update entity with the
 installed and offered version, the release summary and a link to
 `RELEASE_NOTES.md`. *Install* downloads the image into the ESP32's spare OTA
@@ -249,14 +284,14 @@ Tested:
 - The panel's download side with signed catalogs (tests).
 - The TubesZB ESPHome firmware with the update platform compiles.
 - Native runs of the container's toolset on midgard (same tools, user space,
-  `FWPIPE_LOCAL_ONLY=1`): all six TubesZB builds (Zigbee and Thread on
-  stable, beta and latest) build, publish, sign and verify. The panel builds
+  `FWPIPE_LOCAL_ONLY=1`): the TubesZB builds (Zigbee and Thread on every
+  channel) build, publish, sign and verify. Since 2026-11-13 the image runs
+  on midgard and publishes to GitHub. The panel builds
   were not run there (no `make` for that user); they run in WSL and in the
   image.
 
 Not tested yet:
 
-- Building and running the image itself, and a push to GitHub.
 - Flashing: the TubesZB from its web page, the panel with `px30-radio switch`,
   and the router on the panel.
 - OpenThread RCP on the TubesZB hardware.

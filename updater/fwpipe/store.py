@@ -21,7 +21,7 @@ the panel (openssl) and by the TubesZB's ESP32 (mbedTLS) before anything is used
 import base64, os, shutil, time
 
 from .config import PX30_STACK, device_publish
-from .util import file_hash, load_json, log, now_iso, run, safe_name, save_json, version_key
+from .util import file_hash, load_json, log, now_iso, run, safe_name, save_json, version_code, version_key
 
 SCHEMA = 2
 SUMMARY_MAX = 250            # Home Assistant's release_summary limit is 255
@@ -184,6 +184,8 @@ class Store:
         for k in ("stack_version", "revision"):
             if k in info:
                 man[k] = info[k]
+        man["version_code"] = info.get("version_code") or \
+            version_code(info.get("stack_version", info["version"]), info.get("revision", 1))
         if prev:
             man["previous"] = {"version": prev.get("version"), "archive": archived}
         self.write_manifest(device, fw, channel, man)
@@ -191,7 +193,8 @@ class Store:
             # tube0013/esphome-components efr32_flasher ("flat" manifest)
             save_json(os.path.join(live, "efr32_flasher.json"),
                       {"version": man["version"], "fw_url": man["url"], "md5": man["md5"],
-                       "size": man["size"], "baudrate": man["baudrate"]})
+                       "size": man["size"], "baudrate": man["baudrate"],
+                       "version_code": man["version_code"]})
         old = f' (was {prev.get("version")})' if prev else ""
         self.changes.append(f'{device} {fw} {channel}: {man["version"]}{old}')
         return man
@@ -219,16 +222,27 @@ class Store:
         return {"devices": out}
 
     def _write_device_index(self, dname, dev):
+        # version_code orders builds across channels: a client offers a build only
+        # when its code is above that of the version the radio runs (stable can lag
+        # latest; switching to it is then a downgrade, not an update). `newest`
+        # names the channel with the highest build per firmware type.
         index = {"schema": SCHEMA, "generated": now_iso(), "device": dname,
-                 "title": dev.get("title", dname), "firmware": {}}
+                 "title": dev.get("title", dname), "channels": list(dev.get("channels") or {}),
+                 "firmware": {}, "newest": {}}
         for fw in dev.get("firmware") or {}:
             for ch in dev.get("channels") or {}:
                 man = self.current(dname, fw, ch)
                 if man:
-                    index["firmware"].setdefault(fw, {})[ch] = {
-                        k: man.get(k) for k in ("version", "file", "url", "sha256", "md5", "size",
-                                                "baudrate", "flow_control", "sdk", "experimental",
-                                                "release_summary", "release_url", "published")}
+                    e = {k: man.get(k) for k in ("version", "file", "url", "sha256", "md5", "size",
+                                                 "baudrate", "flow_control", "sdk", "experimental",
+                                                 "release_summary", "release_url", "published")}
+                    e["stack_version"] = man.get("stack_version") or man.get("version")
+                    e["version_code"] = man.get("version_code") or \
+                        version_code(e["stack_version"], man.get("revision", 1))
+                    index["firmware"].setdefault(fw, {})[ch] = e
+            chans = index["firmware"].get(fw)
+            if chans:
+                index["newest"][fw] = max(chans, key=lambda c: chans[c]["version_code"])
         if "px30_catalog" in (dev.get("outputs") or []):
             self._write_px30_catalog(dname, dev)
         path = os.path.join(self.device_dir(dname), "index.json")
@@ -250,6 +264,8 @@ class Store:
                 if man:
                     entries.append({
                         "stack": PX30_STACK[fw], "channel": ch, "version": man["version"],
+                        "version_code": man.get("version_code") or version_code(
+                            man.get("stack_version") or man["version"], man.get("revision", 1)),
                         "description": man.get("description", ""), "file": man["file"],
                         "url": man["url"], "sha256": man["sha256"], "size": man["size"],
                         "baudrate": man.get("baudrate") or 115200,

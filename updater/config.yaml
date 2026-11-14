@@ -31,8 +31,9 @@ devices:
     publish: {repo: Warre118/TubesZB_MGM210_Warre_Edition}
     channels:
       stable: {source: release}                 # newest full release of Nabu Casa's builder
-      beta:   {source: prerelease}              # newest pre-release, when newer than the release
       latest: {source: branch, branch: main}    # head of main, as Nabu Casa builds it
+      # No beta channel: the TubesZB offers stable and latest only. A channel that
+      # is removed here is archived from the firmware branch on the next pass.
       # (sdk: newest would take the newest SDK in its image instead of the one in
       # the manifest: a combination upstream does not build, see README)
     firmware:
@@ -49,6 +50,9 @@ devices:
         # which is an MG24 board with LEDs and an accelerometer; the overlay
         # strips those. Test-built 2026-11-13 (builder v2026.09.17-beta2, SDK
         # 2026.6.1); not flashed on hardware yet. The ESP32 starts the join.
+        # Keep experimental until a build has joined a network on a real TubesZB;
+        # then pin stable to that build. Version: the EmberZNet stack version of
+        # its SDK (like the NCP's 9.1.1.1), -rN when the router itself changed.
         enabled: true
         experimental: true
         base: manifests/nabucasa/zbt2/zbt2_router.yaml
@@ -68,7 +72,6 @@ devices:
     channels:
       stable: {source: pinned, version: v4.4.6}       # the build tested on the panel; promote by hand
       latest: {source: release, series: "4."}         # highest Gecko SDK 4.x release
-      beta:   {source: prerelease, series: "4."}      # only when Silicon Labs publishes a pre-release
     firmware:
       zigbee_ncp:
         target: ncp

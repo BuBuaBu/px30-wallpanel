@@ -5,7 +5,7 @@
 #   docker compose logs -f fwpipe
 # One-off commands:
 #   docker compose run --rm fwpipe check
-#   docker compose run --rm fwpipe run --device tubeszb-mgm210 --firmware zigbee_ncp --channel beta
+#   docker compose run --rm fwpipe run --device tubeszb-mgm210 --firmware zigbee_ncp --channel latest
 services:
   fwpipe:
     build:
@@ -19,6 +19,8 @@ services:
       # (Arm GCC, Silicon Labs SDKs: several GB once a few versions are in)
       - fwpipe-data:/data
       - fwpipe-work:/work
+      # the checkout's own config.yaml (the repository is the source of truth:
+      # never mount a separate copy, see README "Which config applies")
       - ./config.yaml:/app/updater/config.yaml:ro
       # ECDSA P-256 private key (radio-update.pem) that signs the manifests (see README)
       - ./keys:/keys:ro

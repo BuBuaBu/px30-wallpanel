@@ -83,6 +83,15 @@ class GitHub:
         t = self.api(f"/repos/{repo}/git/trees/{commit}")
         return {e["path"]: e["sha"] for e in t.get("tree", [])}
 
+    def tree_sha(self, repo, commit, path):
+        """git sha of the folder/file at `path` (a/b/c) at a commit, or "" when missing."""
+        sha = commit
+        for part in [p for p in path.strip("/").split("/") if p]:
+            sha = self.top_tree(repo, sha).get(part, "")
+            if not sha:
+                return ""
+        return sha
+
 
 def resolve_sfb(gh, repo, spec):
     """spec: {source: release|prerelease|branch, branch: main}. None = channel has no source."""

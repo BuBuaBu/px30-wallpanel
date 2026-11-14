@@ -4,6 +4,8 @@
   fwpipe run [--no-push] [--force]  one pass: check, build, archive + publish
   fwpipe loop                       run forever, every check_interval_h hours
   fwpipe status                     what every channel currently holds
+  fwpipe retry [--device ...]       forget failed builds, so the next pass tries them again
+                                    (also automatic when fwpipe's own code changed)
   fwpipe serve [--port 8080]        serve the published tree over HTTP (LAN-only setups)
 
   -c/--config FILE   default $FWPIPE_CONFIG or updater/config.yaml
@@ -55,7 +57,7 @@ def main(argv=None):
     ap.add_argument("--version", action="version", version=__version__)
     ap.add_argument("-c", "--config", default=os.environ.get("FWPIPE_CONFIG", os.path.join(HERE, "config.yaml")))
     sub = ap.add_subparsers(dest="cmd", required=True)
-    for name in ("check", "run"):
+    for name in ("check", "run", "retry"):
         sp = sub.add_parser(name)
         sp.add_argument("--device")
         sp.add_argument("--firmware")
@@ -79,6 +81,10 @@ def main(argv=None):
         return one_pass(p, args, dry_run=True)
     if args.cmd == "run":
         return one_pass(p, args, dry_run=False)
+    if args.cmd == "retry":
+        n = p.clear_failed(args.device, args.firmware, args.channel)
+        log(f"cleared {n} failed build(s); the next pass builds them again")
+        return 0
     if args.cmd == "status":
         idx = p.store.write_indexes()
         for dname, d in idx["devices"].items():

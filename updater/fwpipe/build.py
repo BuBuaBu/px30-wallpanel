@@ -6,7 +6,7 @@ toolchains and SDKs from fwpipe.toolset (downloaded on first use).
   gsdk  this repo's zigbee/ scripts for the TYZS13 (Gecko SDK 4.x),
         through updater/gsdk/build.sh
 """
-import glob, os, shutil, sys
+import glob, os, re, shutil, sys
 from dataclasses import dataclass, field
 
 import yaml
@@ -50,6 +50,42 @@ def _fresh_home(work):
     return home
 
 
+def _c_defines(path):
+    """{name: value} of the plain `#define NAME value` lines of a C header."""
+    out = {}
+    with open(path, encoding="utf-8", errors="replace") as f:
+        for line in f:
+            m = re.match(r"\s*#\s*define\s+(\w+)\s+\(?\s*([0-9]+|0x[0-9A-Fa-f]+)[uUlL]*\s*\)?\s*(?:/[/*].*)?$", line)
+            if m:
+                out[m.group(1)] = int(m.group(2), 0)
+    return out
+
+
+def zigbee_stack_version(sdk):
+    """The EmberZNet version of an SDK, as the NCP reports it (9.1.1.1): the
+    same numbers Nabu Casa's builder puts in an NCP's ezsp_version. Used for
+    firmware that carries no version of its own (the Zigbee router)."""
+    for rel in ("protocol/zigbee/stack/config/config.h", "zigbee/stack/config/config.h"):
+        path = os.path.join(sdk, *rel.split("/"))
+        if os.path.exists(path):
+            d = _c_defines(path)
+            try:
+                return ".".join(str(d[f"SL_ZIGBEE_{k}_VERSION"]) for k in ("MAJOR", "MINOR", "PATCH", "SPECIAL"))
+            except KeyError:
+                try:
+                    return ".".join(str(d[f"EMBER_{k}_VERSION"]) for k in ("MAJOR", "MINOR", "PATCH", "SPECIAL"))
+                except KeyError:
+                    pass
+    return None
+
+
+def own_version(manifest):
+    """True when the firmware writes its own version into the GBL metadata
+    (a `gbl:` key ending in _version set to dynamic, as upstream's builder checks)."""
+    return any(v == "dynamic" and str(k).endswith("_version")
+               for k, v in ((manifest.get("gbl") or {}).items()))
+
+
 def _one_gbl(outdir):
     files = sorted(glob.glob(os.path.join(outdir, "*.gbl")))
     if len(files) != 1:
@@ -82,6 +118,13 @@ class SfbBackend:
         tree = self.gh.top_tree(src.repo, src.commit)
         relevant = {k: tree[k] for k in self.RELEVANT if k in tree}
         config_hash = text_hash(RECIPE_VERSION, spec["base"], overlay_text)
+        if not own_version(manifest):
+            # No version of its own (the Zigbee router): it is published under the
+            # SDK's EmberZNet version, so a change to the application itself must
+            # count as "our side changed" and give a new revision (-r2, ...).
+            app = str(manifest.get("base_project") or "")
+            config_hash = text_hash(config_hash, "version:zigbee-stack",
+                                    self.gh.tree_sha(src.repo, src.commit, app) if app else "")
         text = yaml.safe_dump(manifest, sort_keys=True)
         return Plan(text_hash(config_hash, text, sorted(relevant.items())), config_hash,
                     sdk=str(manifest.get("sdk", "")),
@@ -122,7 +165,11 @@ class SfbBackend:
             env=dict(os.environ, HOME=_fresh_home(work), SILABS_FIRMWARE_BUILD_CONTAINER="1"))
         artifact = _one_gbl(out)
         meta = gbl.read_metadata(artifact)
-        version = gbl.firmware_version(fw, meta)
+        if own_version(man):
+            version = gbl.firmware_version(fw, meta)
+        else:
+            version = zigbee_stack_version(sdk) if fw.startswith("zigbee") else None
+            meta = dict(meta, zigbee_version=version) if version else meta
         if not version:
             raise BuildError(f"no version in the GBL metadata of {os.path.basename(artifact)}: {meta}")
         flow = str((man.get("c_defines") or {}).get("SL_IOSTREAM_USART_VCOM_FLOW_CONTROL_TYPE", ""))
@@ -140,21 +187,38 @@ class GsdkBackend:
     RECIPE = ("zigbee/gen-ot-rcp.sh", "zigbee/build-ot-rcp.sh", "zigbee/patch-ot-rcp.py",
               "zigbee/gen-ncp.sh", "zigbee/build-ncp.sh", "zigbee/patch-ncp.py",
               "updater/gsdk/build.sh", "updater/gsdk/mkgbl.py")
+    # what only the router is built from (kept out of RECIPE, so router changes
+    # do not give the NCP and RCP a new revision)
+    RECIPE_EXTRA = {"router": ("zigbee/gen-router.sh", "zigbee/build-router.sh", "zigbee/router")}
     GCC = "12.2.1.20221205"       # what the Gecko SDK 4.4/4.5 were released with
 
     def __init__(self, gh, cfg, tools=None, app_root=APP_ROOT):
         self.gh, self.cfg, self.app_root = gh, cfg, app_root
         self.tools = tools or Toolset(os.environ.get("FWPIPE_CACHE", "/data/cache"))
 
-    def _recipe_hash(self):
+    def _files(self, rels):
+        for rel in rels:
+            path = os.path.join(self.app_root, rel)
+            if os.path.isdir(path):
+                for root, dirs, files in os.walk(path):
+                    dirs.sort()
+                    for name in sorted(files):
+                        yield os.path.relpath(os.path.join(root, name), self.app_root).replace(os.sep, "/")
+            else:
+                yield rel
+
+    def _recipe_hash(self, target=""):
         parts = [RECIPE_VERSION]
-        for rel in self.RECIPE:
+        extra = list(self._files(self.RECIPE_EXTRA.get(target, ())))
+        for rel in [*self.RECIPE, *extra]:
+            if rel in extra:
+                parts.append(rel)
             with open(os.path.join(self.app_root, rel), "rb") as f:
                 parts.append(f.read().replace(b"\r\n", b"\n"))
         return text_hash(*parts)
 
     def plan(self, device, fw, spec, chspec, src):
-        config_hash = text_hash(self._recipe_hash(), spec["target"], spec.get("baudrate", 115200))
+        config_hash = text_hash(self._recipe_hash(spec["target"]), spec["target"], spec.get("baudrate", 115200))
         return Plan(text_hash(config_hash, src.version), config_hash, sdk=f"gecko_sdk:{src.version}",
                     data={"src": src})
 

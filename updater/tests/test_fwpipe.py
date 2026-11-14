@@ -10,11 +10,11 @@ sys.path.insert(0, os.path.dirname(HERE))
 import yaml  # noqa: E402
 
 from fwpipe import gbl, overlay, sources  # noqa: E402
-from fwpipe.build import BuildError, Plan, Result  # noqa: E402
+from fwpipe.build import BuildError, GsdkBackend, Plan, Result, own_version, zigbee_stack_version  # noqa: E402
 from fwpipe.config import load  # noqa: E402
 from fwpipe.pipeline import Pipeline  # noqa: E402
 from fwpipe.store import Stores  # noqa: E402
-from fwpipe.util import load_json, text_hash  # noqa: E402
+from fwpipe.util import load_json, text_hash, version_code  # noqa: E402
 
 UPDATER = os.path.dirname(HERE)
 
@@ -432,7 +432,104 @@ class PipelineTest(unittest.TestCase):
         self.assertEqual(device_publish(cfg, "tubeszb-mgm210")["base_url"],
                          "https://raw.githubusercontent.com/Warre118/TubesZB_MGM210_Warre_Edition/firmware")
         self.assertEqual(device_publish(cfg, "px30-tyzs13")["repo"], "Warre118/px30-wallpanel")
-        self.assertFalse(cfg["devices"]["tubeszb-mgm210"]["firmware"]["zigbee_router"]["enabled"])
+        router = cfg["devices"]["tubeszb-mgm210"]["firmware"]["zigbee_router"]
+        self.assertTrue(router["enabled"])
+        self.assertTrue(router["experimental"])          # until it has joined a network on hardware
+        self.assertTrue(cfg["devices"]["px30-tyzs13"]["firmware"]["zigbee_router"]["experimental"])
+        for dev in cfg["devices"].values():
+            self.assertEqual(list(dev["channels"]), ["stable", "latest"])
+
+    def test_removed_channel_is_archived(self):
+        self.rels.append(rel("v2-beta1", "2026-05-01", True))
+        self.versions["v2-beta1"] = "9.0.0.0"
+        self.pipeline().run()
+        self.assertIsNotNone(self.man("tubeszb-mgm210", "zigbee_ncp", "beta"))
+        del self.cfg["devices"]["tubeszb-mgm210"]["channels"]["beta"]
+        changes = self.pipeline().run()
+        self.assertEqual(changes, ["tubeszb-mgm210 zigbee_ncp beta: removed (no longer in the config; was 9.0.0.0)"])
+        self.assertFalse(os.path.exists(self.root("tubeszb-mgm210", "zigbee_ncp", "beta")))
+        self.assertTrue(os.listdir(self.root("tubeszb-mgm210", "archive", "zigbee_ncp", "beta")))
+        idx = load_json(self.root("tubeszb-mgm210", "index.json"))
+        self.assertEqual(sorted(idx["firmware"]["zigbee_ncp"]), ["latest", "stable"])
+        self.assertEqual(idx["channels"], ["stable", "latest"])
+        # a limited run (--channel) never archives anything else
+        self.assertEqual(self.pipeline().run(channel="stable"), [])
+
+    def test_version_code_marks_downgrades(self):
+        self.pipeline().run()
+        idx = load_json(self.root("tubeszb-mgm210", "index.json"))
+        ncp = idx["firmware"]["zigbee_ncp"]
+        self.assertEqual(ncp["stable"]["version_code"], version_code("7.5.0.0"))
+        self.assertGreater(ncp["latest"]["version_code"], ncp["stable"]["version_code"])
+        self.assertEqual(idx["newest"]["zigbee_ncp"], "latest")
+        m = self.man("tubeszb-mgm210", "zigbee_ncp", "latest")
+        self.assertEqual(m["version_code"], version_code("9.1.1.1", 1))
+        flat = load_json(self.root("tubeszb-mgm210", "zigbee_ncp", "latest", "efr32_flasher.json"))
+        self.assertEqual(flat["version_code"], m["version_code"])
+        cat = load_json(self.root("px30-tyzs13", "catalog.json"))
+        self.assertTrue(all(e["version_code"] == version_code("7.5.0.0") for e in cat["firmware"]))
+        # a revision sorts above the build it replaces, below the next version
+        self.assertLess(version_code("9.1.1.1"), version_code("9.1.1.1", 2))
+        self.assertLess(version_code("9.1.1.1", 2), version_code("9.1.2.0"))
+        self.assertLess(version_code("7.5.2.0"), version_code("2025.6.2"))
+
+    def test_failed_build_is_retried_when_fwpipe_changes(self):
+        self.main, self.versions["main"] = "dddd", "9.9.9.9"
+        p = self.pipeline(fail={"main"})
+        p.run()
+        self.assertEqual(self.actions(p)[("tubeszb-mgm210", "zigbee_ncp", "latest")], "build-failed")
+        state_path = os.path.join(self.tmp.name, "state", "state.json")
+        state = load_json(state_path)
+        failed = [b for b in state["builds"].values() if b["status"] == "failed"]
+        self.assertEqual(failed[0]["job"], {"device": "tubeszb-mgm210", "firmware": "zigbee_ncp", "channel": "latest"})
+        failed[0]["code_hash"] = "an older fwpipe"
+        with open(state_path, "w") as f:
+            json.dump(state, f)
+        p2 = self.pipeline()
+        p2.run()
+        self.assertEqual(self.actions(p2)[("tubeszb-mgm210", "zigbee_ncp", "latest")], "published")
+
+    def test_retry_clears_failed_markers(self):
+        self.main, self.versions["main"] = "dddd", "9.9.9.9"
+        self.pipeline(fail={"main"}).run()
+        p = self.pipeline()
+        self.assertEqual(p.clear_failed(device="px30-tyzs13"), 0)
+        self.assertEqual(p.clear_failed(device="tubeszb-mgm210", channel="latest"), 1)
+        p2 = self.pipeline()
+        p2.run()
+        self.assertEqual(self.actions(p2)[("tubeszb-mgm210", "zigbee_ncp", "latest")], "published")
+
+
+class BuildHelpersTest(unittest.TestCase):
+    def test_zigbee_stack_version(self):
+        with tempfile.TemporaryDirectory() as sdk:
+            d = os.path.join(sdk, "protocol", "zigbee", "stack", "config")
+            os.makedirs(d)
+            with open(os.path.join(d, "config.h"), "w") as f:
+                f.write("#define SL_ZIGBEE_MAJOR_VERSION 9\n#define SL_ZIGBEE_MINOR_VERSION (1)\n"
+                        "#define SL_ZIGBEE_PATCH_VERSION 1 // patch\n#define SL_ZIGBEE_SPECIAL_VERSION 1u\n"
+                        "#define SL_ZIGBEE_BUILD_NUMBER 412\n")
+            self.assertEqual(zigbee_stack_version(sdk), "9.1.1.1")
+            self.assertIsNone(zigbee_stack_version(os.path.join(sdk, "nope")))
+
+    def test_own_version(self):
+        self.assertTrue(own_version({"gbl": {"fw_type": "zigbee_ncp", "ezsp_version": "dynamic"}}))
+        self.assertFalse(own_version({"gbl": {"fw_type": "zigbee_router", "baudrate": 115200}}))
+
+    def test_router_files_only_change_the_router_recipe(self):
+        with tempfile.TemporaryDirectory() as root:
+            for rel_ in [*GsdkBackend.RECIPE, "zigbee/gen-router.sh", "zigbee/build-router.sh", "zigbee/router/app.c"]:
+                os.makedirs(os.path.dirname(os.path.join(root, rel_)), exist_ok=True)
+                with open(os.path.join(root, rel_), "w") as f:
+                    f.write(rel_)
+            b = GsdkBackend(None, {}, tools=object(), app_root=root)
+            before = {t: b._recipe_hash(t) for t in ("ncp", "ot-rcp", "router")}
+            with open(os.path.join(root, "zigbee", "router", "app.c"), "w") as f:
+                f.write("changed")
+            after = {t: b._recipe_hash(t) for t in ("ncp", "ot-rcp", "router")}
+            self.assertEqual(before["ncp"], after["ncp"])
+            self.assertEqual(before["ot-rcp"], after["ot-rcp"])
+            self.assertNotEqual(before["router"], after["router"])
 
 
 if __name__ == "__main__":

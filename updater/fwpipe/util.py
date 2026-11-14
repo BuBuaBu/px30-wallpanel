@@ -48,6 +48,21 @@ def version_key(v):
     return tuple(int(p) for p in re.findall(r"\d+", str(v or "")))
 
 
+def version_code(version, revision=1):
+    """One integer that orders builds: the first four numbers of the version
+    (major * 10^9 + minor * 10^6 + patch * 10^3 + special), times 100, plus the
+    revision. 9.1.1.1 -> 900100100100 + 1; 7.5.1.0-r2 -> 700500100000 + 2.
+    Fits a JSON number and an int64. A client computes the same code for the
+    version the radio reports (revision 1 when it has no -rN; the radio only
+    reports the stack version, so a revision of it is not a downgrade) and
+    offers a build only when its code is higher."""
+    first, *rest = (list(version_key(version)) + [0, 0, 0, 0])[:4]
+    code = first                      # unbounded: 2026.6.1 still sorts right
+    for p in rest:
+        code = code * 1000 + min(p, 999)
+    return code * 100 + min(int(revision or 0), 99)
+
+
 def safe_name(s):
     return re.sub(r"[^A-Za-z0-9._+-]+", "_", str(s)).strip("_")
 

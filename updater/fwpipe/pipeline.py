@@ -1,14 +1,34 @@
 """One pass over every (device, firmware type, channel): resolve the upstream
 source, build when something changed, archive + publish when the result is new."""
-import json, os, shutil, time, urllib.request
+import functools, hashlib, json, os, shutil, time, urllib.request
 
 from . import notes, sources
-from .build import BuildError
+from .build import APP_ROOT, BuildError
 from .config import jobs
 from .sources import SourceError
-from .util import load_json, log, now_iso, save_json
+from .util import load_json, log, now_iso, save_json, version_code
 
 RETRY_BASE_H = 24          # a failed build is retried after 24 h, 48 h, ... (max 7 days)
+                           # or as soon as fwpipe's own code changed (code_hash)
+
+
+@functools.lru_cache(maxsize=None)
+def code_hash():
+    """Hash of everything in the image that decides how a build runs: fwpipe,
+    the tool wrappers, the gsdk scripts, the panel recipe and the Dockerfile.
+    A failed build is retried right away once this changes."""
+    root = APP_ROOT
+    h = hashlib.sha256()
+    for top in ("updater/fwpipe", "updater/bin", "updater/gsdk", "updater/Dockerfile", "zigbee"):
+        path = os.path.join(root, top)
+        files = [path] if os.path.isfile(path) else sorted(
+            os.path.join(r, f) for r, ds, fs in os.walk(path) for f in fs
+            if "__pycache__" not in r and not f.endswith(".pyc"))
+        for f in files:
+            h.update(os.path.relpath(f, root).replace(os.sep, "/").encode() + b"\0")
+            with open(f, "rb") as fh:
+                h.update(fh.read().replace(b"\r\n", b"\n"))
+    return h.hexdigest()[:16]
 
 
 class Pipeline:
@@ -50,6 +70,10 @@ class Pipeline:
     def _blocked(self, fp, force):
         b = self.state["builds"].get(fp)
         if not b or b.get("status") != "failed" or force:
+            return None
+        # fwpipe itself changed since (a fix for the failure, like the clean HOME
+        # for ZAP): try again now instead of waiting out the back-off
+        if b.get("code_hash") != code_hash():
             return None
         if time.time() < b.get("retry_after", 0):
             return b
@@ -101,7 +125,8 @@ class Pipeline:
         revision = (current.get("revision", 1) + 1) if same else 1
         info.update(version=build["version"] + (f"-r{revision}" if revision > 1 else ""),
                     fingerprint=fp, config_hash=plan.config_hash, experimental=spec.get("experimental"),
-                    stack_version=build["version"], revision=revision)
+                    stack_version=build["version"], revision=revision,
+                    version_code=version_code(build["version"], revision))
         info["notes"], info["summary"] = notes.make(self.gh, dev, fw, ch, info["version"], info, src, current)
         man = self.store.publish(dname, fw, ch, os.path.join(self.cache_dir, fp, "firmware.gbl"), info)
         self._row(dname, fw, ch, src, current, "published", man["version"])
@@ -121,7 +146,8 @@ class Pipeline:
         except Exception as e:           # a failed build must not stop the other jobs
             attempts = prev.get("attempts", 0) + 1
             entry = {"status": "failed", "error": str(e)[-1500:], "time": now_iso(), "attempts": attempts,
-                     "retry_after": time.time() + min(attempts * RETRY_BASE_H, 168) * 3600}
+                     "retry_after": time.time() + min(attempts * RETRY_BASE_H, 168) * 3600,
+                     "code_hash": code_hash(), "job": {"device": dname, "firmware": fw, "channel": ch}}
             self.failures.append(f"{dname} {fw} {ch}: build failed: {str(e)[-300:]}")
             log(f"build FAILED: {dname} {fw} {ch}: {e}")
         finally:
@@ -138,6 +164,8 @@ class Pipeline:
         self.store.open()
         for job in jobs(self.cfg, device, firmware, channel):
             self.process(*job, dry_run=dry_run, force=force)
+        if not (dry_run or device or firmware or channel):
+            self._retire_unconfigured()
         changes = list(self.store.changes)
         if not dry_run:
             self.store.write_indexes()
@@ -148,6 +176,39 @@ class Pipeline:
             if changes or self.failures:
                 self.notify(changes)
         return changes
+
+    def _retire_unconfigured(self):
+        """A channel (or firmware type) taken out of the config: archive what its
+        folder still offers, so it leaves the live tree, index.json and the catalog."""
+        live = {(d, fw, ch) for d, fw, ch, *_ in jobs(self.cfg)}
+        for dname, dev in self.cfg["devices"].items():
+            base = self.store.device_dir(dname)
+            for fw in sorted(os.listdir(base)) if os.path.isdir(base) else ():
+                if fw == "archive" or fw.startswith(".") or not os.path.isdir(os.path.join(base, fw)):
+                    continue
+                for ch in sorted(os.listdir(os.path.join(base, fw))):
+                    if (dname, fw, ch) in live or not os.path.isdir(os.path.join(base, fw, ch)):
+                        continue
+                    if self.store.current(dname, fw, ch):
+                        self.store.retire(dname, fw, ch, "no longer in the config")
+                if not os.listdir(os.path.join(base, fw)):
+                    os.rmdir(os.path.join(base, fw))
+
+    def clear_failed(self, device=None, firmware=None, channel=None):
+        """Forget failed-build markers (`fwpipe retry`), so the next pass tries
+        those builds again. Returns how many were cleared."""
+        n = 0
+        for fp, b in list(self.state["builds"].items()):
+            if b.get("status") != "failed":
+                continue
+            job = b.get("job") or {}
+            if any(want and job.get(k) not in (None, want)
+                   for k, want in (("device", device), ("firmware", firmware), ("channel", channel))):
+                continue
+            del self.state["builds"][fp]
+            n += 1
+        save_json(self.state_path, self.state)
+        return n
 
     def _prune_cache(self, days=60):
         cutoff = time.time() - days * 86400
