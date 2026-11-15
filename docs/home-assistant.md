@@ -155,7 +155,7 @@ The check runs every 6 hours and on "Check for updates".
   exists). Without it, only the firmware in the image is known. Installing
   goes through `px30-radio switch` and **does not work yet**
   ([radio.md](radio.md)). The pipeline that publishes the catalog:
-  [updater/README.md](../updater/README.md).
+  [fwpipe](https://github.com/Warre118/fwpipe) (private repo).
 
 ## Security notes
 

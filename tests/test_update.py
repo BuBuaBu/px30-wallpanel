@@ -1,5 +1,5 @@
 """Tests for `px30-update radio sync` against a local HTTP server, including the
-catalog the update pipeline (updater/fwpipe) publishes.
+catalog the update pipeline (fwpipe repo) publishes.
 Runs on Linux (WSL) or Windows: python3 tests/test_update.py"""
 import base64, contextlib, functools, hashlib, http.server, io, json, os, shutil, subprocess, sys, tempfile
 import threading, unittest
@@ -151,7 +151,10 @@ class SyncTest(unittest.TestCase):
 
     def test_catalog_published_by_the_pipeline(self):
         """fwpipe's Store writes the tree; the panel syncs from it; px30-radio reads the result."""
-        sys.path.insert(0, os.path.join(ROOT, "updater"))
+        fwpipe_dir = os.environ.get("FWPIPE_DIR", os.path.join(ROOT, "..", "fwpipe"))
+        if not os.path.isdir(fwpipe_dir):
+            self.skipTest(f"fwpipe checkout not found at {fwpipe_dir} (set FWPIPE_DIR)")
+        sys.path.insert(0, fwpipe_dir)
         try:
             from fwpipe.config import load
             from fwpipe.store import Stores

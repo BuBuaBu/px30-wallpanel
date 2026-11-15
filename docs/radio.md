@@ -49,7 +49,7 @@ Details:
   `OUT`, `DIST`, `GSDK_LABEL`, `SLC_TOOL_PATH`, `MKGBL`; the defaults are the
   WSL setup above) and work with slc-cli 5 and 6. That is how the update
   pipeline builds them in a container for other Gecko SDK versions:
-  [updater/README.md](../updater/README.md). Gecko SDK 4.5.1 (EmberZNet
+  [fwpipe](https://github.com/Warre118/fwpipe) (private repo). Gecko SDK 4.5.1 (EmberZNet
   7.5.2.0) still supports the MG13.
 
 ## First flash: SWD (once)
@@ -158,7 +158,7 @@ px30-radio apply                          (at boot) run only the chosen stack's 
   published. The catalog and its firmware come from the `firmware` branch of
   this repository and are signed (ECDSA P-256, public key
   `/etc/px30/radio-update.pub`); each channel has `RELEASE_NOTES.md`. See
-  [updater/README.md](../updater/README.md).
+  [fwpipe](https://github.com/Warre118/fwpipe) (private repo).
 - **Warnings before acting** (type the word to confirm, or pass `--yes`):
   - a stack switch loses the network, and all devices must be paired again;
   - an update or downgrade within a stack risks it.
