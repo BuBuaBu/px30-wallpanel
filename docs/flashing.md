@@ -128,11 +128,13 @@ step 1 done:
 bash tools/px30-android-autoinstall.sh <release-dir> <panel-ip>:5555 [hostname] --reboot
 ```
 
+> **Make the full eMMC backup (step 1) first.** This overwrites `stback`, a
+> Smatek backup partition Android does not mount: the eMMC backup holds its
+> only copy, so without it the stock `stback` is lost for good.
+
 - Writes the release as a tar (`px30-autoinstall/`, with `PAYLOAD.sha256`
   and the optional hostname) raw into Android's `stback` partition, and
   `px30-rescue.img` into `recovery`; both are read back and compared.
-  `stback` is a Smatek backup partition Android does not mount: **the eMMC
-  backup holds the only copy of it**.
 - `--reboot` runs `adb reboot recovery`. The rescue mode finds the payload
   (old layout + `px30-autoinstall/` at the start of `stback`), checks every
   sha256 **before** writing anything, shows a 30 s countdown (stop it with
