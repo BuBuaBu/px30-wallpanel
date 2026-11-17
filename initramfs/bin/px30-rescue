@@ -195,15 +195,16 @@ do_autoinstall() { # [--now]
 		say "  $f OK"
 	done < /tmp/ai.sha256
 	grep -q ' px30-rootfs.img.zst$' /tmp/ai.sha256 || die "payload: no rootfs"
+	ver=$(ai_get VERSION)       # read once: ai_get streams all of stback through tar
 	if [ "$1" != --now ]; then
 		n=30
 		while [ $n -gt 0 ] && [ ! -e /tmp/hold ]; do
-			screen "Automatic install of $(ai_get VERSION)" "Starts in $n s: replaces Android." "" "Stop: ssh ... px30-rescue hold"
+			screen "Automatic install of $ver" "Starts in $n s: replaces Android." "" "Stop: ssh ... px30-rescue hold"
 			sleep 1; n=$((n - 1))
 		done
 		[ -e /tmp/hold ] && die "autoinstall stopped (hold)"
 	fi
-	screen "Installing $(ai_get VERSION) ..." "Do not power off."
+	screen "Installing $ver ..." "Do not power off."
 	(do_repartition --yes) || die "repartition"
 	ai_get px30-rootfs.img.zst | do_write_rootfs b || exit 1
 	ai_get px30-boot.img | do_write_part boot || exit 1
