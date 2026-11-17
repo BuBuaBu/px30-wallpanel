@@ -12,7 +12,7 @@ This is the interface px30-agent calls (via sudo, exact arguments only, see
       flashed. The catalog URL is .update.radio_catalog_url in
       /data/px30-agent/config.json; without that key the catalog this repo's
       update pipeline publishes (DEFAULT_CATALOG), "" turns it off.
-      (written by the update pipeline, see updater/README.md).
+      (written by the update pipeline, see the fwpipe repo).
         - https only; firmware URLs must be on the catalog's own host
         - every file is checked against the sha256 in the catalog
         - if /etc/px30/radio-update.pub exists (ECDSA P-256 public key, PEM; the

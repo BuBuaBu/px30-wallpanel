@@ -91,7 +91,7 @@ DEFAULT_CONFIG = {
         "module_tag_prefix": "module-",
         "github_token": "",
         # radio module firmware: catalog.json published by the update pipeline
-        # (updater/), fetched by `px30-update radio sync`; signed, checked with
+        # (fwpipe repo), fetched by `px30-update radio sync`; signed, checked with
         # /etc/px30/radio-update.pub. "" = only the firmware shipped in the image.
         "radio_catalog_url": "https://raw.githubusercontent.com/Warre118/px30-wallpanel/firmware/catalog.json",
     },

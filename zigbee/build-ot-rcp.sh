@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Step 2: set the pinout, build and make the GBL for the TYZS13 RCP.
 set -euo pipefail
-# Overridable (updater/gsdk/build.sh sets these in the build container):
+# Overridable (fwpipe/gsdk/build.sh sets these in the build container):
 #   T, GCC_DIR, OUT as in the gen script; DIST output folder; GSDK_LABEL the
 #   SDK part of the file name; MKGBL a program "MKGBL <elf> <out.gbl>" used
 #   instead of Simplicity Commander to make the GBL

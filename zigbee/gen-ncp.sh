@@ -4,7 +4,7 @@
 # Extra component: bootloader_interface -> EZSP launchStandaloneBootloader werkt
 # (needed to go back to Thread with universal-silabs-flasher).
 set -euo pipefail
-# Overridable (updater/gsdk/build.sh sets these in the build container):
+# Overridable (fwpipe/gsdk/build.sh sets these in the build container):
 #   T toolchain folder, SDK Gecko SDK, GCC_DIR Arm GCC, OUT project folder,
 #   SLC_TOOL_PATH python adapter pack (slc-cli 6 from the update site needs it)
 T="${T:-$HOME/px30-build/silabs}"

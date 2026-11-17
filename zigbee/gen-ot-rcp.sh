@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Generate (step 1) the OpenThread RCP project for the TYZS13 (EFR32MG13P732F512GM48).
 set -euo pipefail
-# Overridable (updater/gsdk/build.sh sets these in the build container):
+# Overridable (fwpipe/gsdk/build.sh sets these in the build container):
 #   T toolchain folder, SDK Gecko SDK, GCC_DIR Arm GCC, OUT project folder,
 #   SLC_TOOL_PATH python adapter pack (slc-cli 6 from the update site needs it)
 T="${T:-$HOME/px30-build/silabs}"
