@@ -1,0 +1,29 @@
+<!doctype html>
+<html><head><meta charset="utf-8">
+<!-- First page of Cog: the same boot animation as Plymouth (240x240,
+     centred on black) until Home Assistant is reachable. Then on to the URL
+     after '#'. WebKit keeps this page visible until HA draws itself. -->
+<style>
+html,body{margin:0;height:100%;background:#000;overflow:hidden;cursor:none}
+img{position:absolute;left:50%;top:50%;width:240px;height:240px;margin:-120px 0 0 -120px}
+#msg{position:absolute;bottom:18px;width:100%;text-align:center;color:#666;
+     font:14px sans-serif;display:none}
+</style></head>
+<body><img src="bootanim.png" alt="" onerror="this.remove()"><div id="msg">Waiting for Home Assistant…</div>
+<script>
+var url = decodeURIComponent(location.hash.slice(1));
+var t0 = Date.now(), gone = false;
+function go() { if (!gone) { gone = true; location.replace(url); } }
+function probe() {
+  if (gone) return;
+  if (Date.now() - t0 > 45000) document.getElementById('msg').style.display = 'block';
+  var ctl = new AbortController();
+  var to = setTimeout(function () { ctl.abort(); }, 5000);
+  // no-cors: only "is the server reachable", no content needed
+  fetch(url, {mode: 'no-cors', cache: 'no-store', signal: ctl.signal})
+    .then(function () { clearTimeout(to); go(); })
+    .catch(function () { clearTimeout(to); setTimeout(probe, 2000); });
+}
+// no http(s) dashboard configured: px30-panel takes over
+if (/^https?:\/\//.test(url)) setTimeout(probe, 300);
+</script></body></html>
